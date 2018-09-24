@@ -1,3 +1,17 @@
 const { render } = require('../dist/index');
 
-console.log('demo!', render);
+const App = ({ children, style }) => ['div', [['div', { style }, children]]];
+
+const mount = (app) => {
+  render(app, document.querySelector('#app'));
+};
+
+mount(() => [
+  App,
+  { style: { backgroundColor: 'red', fontSize: '25px' } },
+  'test',
+]);
+setTimeout(() => {
+  console.log('------');
+  mount(() => [App, { style: { backgroundColor: 'green' } }, ['div', 'woow']]);
+}, 1000);

@@ -1,113 +1,205 @@
-console.log('this is a node library!');
-
-interface ElementConfig {
-  className?: string;
-  style?: Style;
-  [key: string]: any;
-}
-
-type VChildren = VElement[] | string;
+type VChildren = VElement[];
 
 interface IProps {
-  children: VChildren;
+  className?: string;
+  style?: Style;
+  children?: VChildren;
+  [key: string]: any;
 }
 
 interface Style {
   [key: string]: any;
 }
 
+type VElementType = 'tag' | 'text';
+
 interface VElement {
   tag: string;
-  className: string;
-  style: Style;
-  dom: HTMLElement;
+  dom: HTMLElement | Text;
   props: IProps;
+  type: VElementType;
 }
 
-/* interface IClassComponent {
-  render(): VElement;
-} */
-type IPureComponent = (config: ElementConfig) => VElement;
+type IPureComponent = (props: IProps) => VElement;
 type IComponent = IPureComponent;
 
-const defaultConfig = {
+const defaultProps = {
   className: '',
   style: {},
 };
+type ITag = string | IComponent;
 
 interface ICreateElement {
-  tag: string | IComponent;
-  config?: ElementConfig;
+  tag: ITag;
+  props?: IProps;
   children?: VChildren;
 }
 
 export function createElement({
   tag,
-  config = defaultConfig,
+  props = defaultProps,
   children,
 }: ICreateElement): VElement {
   if (typeof tag === 'function') {
-    return tag(config);
+    return tag({ ...props, children });
   }
 
-  const { className, style } = config;
+  const { className, style } = props;
   return {
+    type: children ? 'tag' : 'text',
     tag,
-    style,
-    className,
     dom: null,
     props: {
       children,
+      style,
+      className,
     },
   };
 }
 
-/* const isComponent = (element: VElement) => typeof element.tag === 'function';
+type TextNode = string | number;
+interface ElementArr
+  extends Array<
+      [ITag, IProps, TextNode | ElementArr] | [ITag, TextNode | ElementArr]
+    > {}
 
-function update(prevElement: VElement, nextElement: VElement) {
-  if (prevElement.tag === nextElement.tag) {
-    updateElement(prevElement, nextElement);
-  } else {
+function convertChildrenToElement(el: TextNode | ElementArr[]): VElement {
+  const children =
+    typeof el === 'string'
+      ? [convertArrToElement([el as any])]
+      : (el as any).map(convertArrToElement);
+  return children;
+}
+
+function convertArrToElement(el: ElementArr): VElement {
+  if (!Array.isArray(el)) {
+    return el;
   }
-} */
 
-/* function updateElement(prevElement: VElement, nextElement: VElement) {
-  const dom = prevElement.dom;
-  nextElement.dom = dom;
-
-  const nextStyle = nextElement.style;
-  if (prevElement.style !== nextStyle) {
-    Object.keys(nextStyle).forEach((s) => (dom.style[s as any] = nextStyle[s]));
+  let ele = null;
+  if (el.length === 1) {
+    return createElement({ tag: el[0] } as any);
+  } else if (el.length === 2) {
+    const children = convertChildrenToElement(el[1] as any);
+    ele = createElement({ tag: el[0], children } as any);
+  } else if (el.length === 3) {
+    const children = convertChildrenToElement(el[2] as any);
+    ele = createElement({ tag: el[0], props: el[1], children } as any);
   }
-} */
 
-export function render(element: VElement, node: HTMLElement) {
-  const { tag, className, props, style } = element;
-  const domNode = document.createElement(tag);
+  if (Array.isArray(ele)) {
+    return convertArrToElement(ele);
+  }
 
+  return ele;
+}
+
+function renderFn() {
+  let curElement: VElement = null;
+  return (fn: () => ElementArr, nextNode: HTMLElement) => {
+    const el = typeof fn === 'function' ? fn() : fn;
+    const nextElement = convertArrToElement(el);
+    mount(curElement, nextElement, nextNode);
+    curElement = nextElement;
+  };
+}
+
+export const render = renderFn();
+
+const isTextNode = (node: VElement) => node.type === 'text';
+
+function updateNodeProperties(
+  node: HTMLElement,
+  curProps: any,
+  nextProps: any,
+) {
+  const { className, style } = nextProps;
   if (className) {
-    domNode.className = className;
-  }
-
-  if (props.children) {
-    if (
-      typeof props.children === 'string' ||
-      typeof props.children === 'number'
-    ) {
-      const children = document.createTextNode(props.children);
-      domNode.appendChild(children);
-    } else {
-      props.children.forEach((child) => {
-        render(child, domNode);
-      });
-    }
+    node.className = className;
   }
 
   if (style) {
-    Object.keys(style).forEach((sKey) => {
-      domNode.style[sKey as any] = style[sKey as any];
+    const styles = { ...curProps.style, ...style };
+    Object.keys(styles).forEach((key) => {
+      const value = style[key] || '';
+      node.style[key as any] = value;
+    });
+  }
+}
+
+function create(element: VElement, node: HTMLElement): HTMLElement | Text {
+  const { tag, props } = element;
+
+  if (isTextNode(element)) {
+    const domNode = document.createTextNode(tag);
+    node.appendChild(domNode);
+    element.dom = domNode;
+    return domNode;
+  }
+
+  const domNode = document.createElement(tag);
+  updateNodeProperties(domNode, {}, props);
+
+  if (props.children) {
+    const children = props.children as VElement[];
+    children.forEach((child) => {
+      create(child, domNode);
     });
   }
 
+  element.dom = domNode;
+
+  // node.innerHTML = '';
   node.appendChild(domNode);
+
+  return domNode;
+}
+
+function update(
+  curElement: VElement,
+  nextElement: VElement,
+  parent: HTMLElement,
+  node: HTMLElement,
+): HTMLElement {
+  console.log(curElement, nextElement);
+  if (curElement === nextElement) {
+    console.log('EQUAL');
+  } else if (isTextNode(curElement) && isTextNode(nextElement)) {
+    console.log('TEXTNODE');
+    node.nodeValue = `${nextElement.tag}`;
+  } else if (!isTextNode(curElement) && !isTextNode(nextElement)) {
+    console.log('CHILDREN');
+    const curChildren = curElement.props.children as VElement[];
+    const nextChildren = nextElement.props.children as VElement[];
+    console.log(curChildren.length === nextChildren.length);
+    if (curChildren.length === nextChildren.length) {
+      nextChildren.forEach((nextChild, index) => {
+        update(curChildren[index], nextChild, node, node.firstChild as any);
+      });
+    }
+  } else if (isTextNode(curElement) && !isTextNode(nextElement)) {
+    console.log('NEXT ELEMENT NOT TEXT');
+    const newNode = document.createElement('div');
+    create(nextElement, newNode);
+    parent.insertBefore(newNode.firstChild, node);
+    parent.removeChild(node);
+  }
+
+  if (!isTextNode(nextElement)) {
+    updateNodeProperties(node, curElement.props, nextElement.props);
+  }
+  nextElement.dom = node;
+  return node;
+}
+
+export function mount(
+  curElement: VElement,
+  nextElement: VElement,
+  node: HTMLElement,
+) {
+  if (!curElement) {
+    return create(nextElement, node);
+  }
+
+  return update(curElement, nextElement, node, node.firstChild as any);
 }
