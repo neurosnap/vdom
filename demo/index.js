@@ -9,9 +9,9 @@ const mount = (app) => {
 mount(() => [
   App,
   { style: { backgroundColor: 'red', fontSize: '25px' } },
-  'test',
+  ['div', ['div', 'test']],
 ]);
 setTimeout(() => {
   console.log('------');
-  mount(() => [App, { style: { backgroundColor: 'green' } }, ['div', 'woow']]);
+  mount(() => [App, { style: { backgroundColor: 'green' } }, 'wow']);
 }, 1000);

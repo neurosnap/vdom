@@ -63,12 +63,16 @@ interface ElementArr
       [ITag, IProps, TextNode | ElementArr] | [ITag, TextNode | ElementArr]
     > {}
 
-function convertChildrenToElement(el: TextNode | ElementArr[]): VElement {
-  const children =
-    typeof el === 'string'
-      ? [convertArrToElement([el as any])]
-      : (el as any).map(convertArrToElement);
-  return children;
+function convertChildrenToElement(el: TextNode | ElementArr[]): VElement[] {
+  if (Array.isArray(el)) {
+    if (Array.isArray(el[0])) {
+      return el.map(convertArrToElement);
+    } else {
+      return [convertArrToElement(el as any)];
+    }
+  }
+
+  return [convertArrToElement([el as any])];
 }
 
 function convertArrToElement(el: ElementArr): VElement {
@@ -78,6 +82,9 @@ function convertArrToElement(el: ElementArr): VElement {
 
   let ele = null;
   if (el.length === 1) {
+    if (typeof el[0] !== 'string') {
+      return el[0] as any;
+    }
     return createElement({ tag: el[0] } as any);
   } else if (el.length === 2) {
     const children = convertChildrenToElement(el[1] as any);
@@ -161,7 +168,15 @@ function update(
   parent: HTMLElement,
   node: HTMLElement,
 ): HTMLElement {
-  console.log(curElement, nextElement);
+  if (curElement && !nextElement) {
+    parent.removeChild(node);
+  }
+
+  if (!curElement && nextElement) {
+    create(nextElement, parent);
+    return;
+  }
+
   if (curElement === nextElement) {
     console.log('EQUAL');
   } else if (isTextNode(curElement) && isTextNode(nextElement)) {
@@ -171,10 +186,15 @@ function update(
     console.log('CHILDREN');
     const curChildren = curElement.props.children as VElement[];
     const nextChildren = nextElement.props.children as VElement[];
-    console.log(curChildren.length === nextChildren.length);
-    if (curChildren.length === nextChildren.length) {
+    console.log(curChildren.length, nextChildren.length);
+    if (nextChildren.length >= curChildren.length) {
       nextChildren.forEach((nextChild, index) => {
         update(curChildren[index], nextChild, node, node.firstChild as any);
+      });
+    } else {
+      console.log('HITTT');
+      curChildren.forEach((curChild, index) => {
+        update(curChild, nextChildren[index], node, node.firstChild as any);
       });
     }
   } else if (isTextNode(curElement) && !isTextNode(nextElement)) {
