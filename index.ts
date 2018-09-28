@@ -133,10 +133,11 @@ interface DynamicHTMLElement extends HTMLElement {
   [key: string]: any;
 }
 
-const eventProxy = (event: any) => {
-  console.log(event.currentTarget.events);
-  return event.currentTarget.events[event.type](event);
-};
+const eventProxy = (event: any) =>
+  event.currentTarget.events[event.type](event);
+
+const ignoreAttributes = ['key', 'children'];
+const mustSetAttribute = ['list', 'draggable', 'spellcheck', 'translate'];
 
 function updateProperty(
   node: DynamicHTMLElement,
@@ -144,11 +145,11 @@ function updateProperty(
   curValue: Value,
   nextValue: Value,
 ) {
-  if (curValue === nextValue) {
+  if (ignoreAttributes.indexOf(name) >= 0) {
     return;
   }
 
-  if (name === 'key' || name === 'children') {
+  if (curValue === nextValue) {
     return;
   }
 
@@ -170,9 +171,17 @@ function updateProperty(
     }
   } else {
     const nullOrFalse = nextValue == null || nextValue === false;
-    node[name] = nextValue == null ? '' : nextValue;
-    if (nullOrFalse) {
-      node.removeAttribute(name);
+    if (mustSetAttribute.indexOf(name) >= 0) {
+      if (nullOrFalse) {
+        node.removeAttribute(name);
+      } else {
+        node.addAttribute(name, nextValue);
+      }
+    } else {
+      node[name] = nextValue == null ? '' : nextValue;
+      if (nullOrFalse) {
+        node.removeAttribute(name);
+      }
     }
   }
 }
