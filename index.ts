@@ -33,6 +33,7 @@ interface ICreateElement {
   tag: ITag;
   props?: IProps;
   children?: VChildren;
+  [key: string]: any;
 }
 
 export function createElement({
@@ -44,15 +45,13 @@ export function createElement({
     return tag({ ...props, children });
   }
 
-  const { className, style } = props;
   return {
     type: children ? 'tag' : 'text',
     tag,
     dom: null,
     props: {
       children,
-      style,
-      className,
+      ...props,
     },
   };
 }
@@ -120,18 +119,70 @@ function updateNodeProperties(
   curProps: any,
   nextProps: any,
 ) {
-  const { className, style } = nextProps;
-  if (className) {
-    node.className = className;
+  const props = { ...curProps, ...nextProps };
+  for (const name in props) {
+    updateProperty(node, name, curProps[name], nextProps[name]);
+  }
+}
+
+interface Obj {
+  [key: string]: string | number;
+}
+type Value = string | number | boolean | Obj;
+interface DynamicHTMLElement extends HTMLElement {
+  [key: string]: any;
+}
+
+const eventProxy = (event: any) => {
+  console.log(event.currentTarget.events);
+  return event.currentTarget.events[event.type](event);
+};
+
+function updateProperty(
+  node: DynamicHTMLElement,
+  name: string,
+  curValue: Value,
+  nextValue: Value,
+) {
+  if (curValue === nextValue) {
+    return;
   }
 
-  if (style) {
-    const styles = { ...curProps.style, ...style };
-    Object.keys(styles).forEach((key) => {
-      const value = style[key] || '';
-      node.style[key as any] = value;
-    });
+  if (name === 'key' || name === 'children') {
+    return;
   }
+
+  if (name === 'style') {
+    updateStyles(node, curValue as Obj, nextValue as Obj);
+  } else if (name[0] === 'o' && name[1] === 'n') {
+    if (!node.events) {
+      node.events = {};
+    }
+
+    const eventName = name.toLocaleLowerCase();
+    const eventNameType = eventName.slice(2);
+    node.events[eventNameType] = nextValue;
+
+    if (!nextValue) {
+      node.removeEventListener(eventNameType, eventProxy);
+    } else if (!curValue) {
+      node.addEventListener(eventNameType, eventProxy);
+    }
+  } else {
+    const nullOrFalse = nextValue == null || nextValue === false;
+    node[name] = nextValue == null ? '' : nextValue;
+    if (nullOrFalse) {
+      node.removeAttribute(name);
+    }
+  }
+}
+
+function updateStyles(node: HTMLElement, curStyle: Obj, nextStyle: Obj) {
+  const styles = { ...curStyle, ...nextStyle };
+  Object.keys(styles).forEach((key) => {
+    const value = styles[key] || '';
+    node.style[key as any] = value as any;
+  });
 }
 
 function create(element: VElement, node: HTMLElement): HTMLElement | Text {
@@ -155,10 +206,7 @@ function create(element: VElement, node: HTMLElement): HTMLElement | Text {
   }
 
   element.dom = domNode;
-
-  // node.innerHTML = '';
   node.appendChild(domNode);
-
   return domNode;
 }
 
@@ -192,7 +240,6 @@ function update(
         update(curChildren[index], nextChild, node, node.firstChild as any);
       });
     } else {
-      console.log('HITTT');
       curChildren.forEach((curChild, index) => {
         update(curChild, nextChildren[index], node, node.firstChild as any);
       });
