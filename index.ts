@@ -1,128 +1,53 @@
+interface Style {
+  [key: string]: any;
+}
+
+type VElementType = 'tag' | 'text';
+type DOMElement = HTMLElement | SVGSVGElement;
+interface VElement {
+  tag: string;
+  text?: string | number;
+  dom: DOMElement | Text;
+  props: IProps;
+  type: VElementType;
+}
+
 type VChildren = VElement[];
 
 interface IProps {
   className?: string;
   style?: Style;
   children?: VChildren;
+  key?: string;
   [key: string]: any;
 }
 
-interface Style {
+interface IComponentProps {
+  className?: string;
+  style?: Style;
+  children?: VChildren | string | number;
   [key: string]: any;
 }
-
-type VElementType = 'tag' | 'text';
-
-interface VElement {
-  tag: string;
-  dom: HTMLElement | Text;
-  props: IProps;
-  type: VElementType;
-}
-
-type IPureComponent = (props: IProps) => VElement;
+type IPureComponent = (props: IComponentProps) => VElement;
 type IComponent = IPureComponent;
 
-const defaultProps = {
-  className: '',
-  style: {},
-};
 type ITag = string | IComponent;
 
 interface ICreateElement {
   tag: ITag;
   props?: IProps;
-  children?: VChildren;
+  children?: VElement[] | string | number;
   [key: string]: any;
 }
-
-export function createElement({
-  tag,
-  props = defaultProps,
-  children,
-}: ICreateElement): VElement {
-  if (typeof tag === 'function') {
-    return tag({ ...props, children });
-  }
-
-  return {
-    type: children ? 'tag' : 'text',
-    tag,
-    dom: null,
-    props: {
-      children,
-      ...props,
-    },
-  };
+interface ICreateTextElement {
+  text: string | number;
+  props?: IProps;
 }
 
-type TextNode = string | number;
-interface ElementArr
-  extends Array<
-      [ITag, IProps, TextNode | ElementArr] | [ITag, TextNode | ElementArr]
-    > {}
-
-function convertChildrenToElement(el: TextNode | ElementArr[]): VElement[] {
-  if (Array.isArray(el)) {
-    if (Array.isArray(el[0])) {
-      return el.map(convertArrToElement);
-    } else {
-      return [convertArrToElement(el as any)];
-    }
-  }
-
-  return [convertArrToElement([el as any])];
-}
-
-function convertArrToElement(el: ElementArr): VElement {
-  if (!Array.isArray(el)) {
-    return el;
-  }
-
-  let ele = null;
-  if (el.length === 1) {
-    if (typeof el[0] !== 'string') {
-      return el[0] as any;
-    }
-    return createElement({ tag: el[0] } as any);
-  } else if (el.length === 2) {
-    const children = convertChildrenToElement(el[1] as any);
-    ele = createElement({ tag: el[0], children } as any);
-  } else if (el.length === 3) {
-    const children = convertChildrenToElement(el[2] as any);
-    ele = createElement({ tag: el[0], props: el[1], children } as any);
-  }
-
-  if (Array.isArray(ele)) {
-    return convertArrToElement(ele);
-  }
-
-  return ele;
-}
-
-function renderFn() {
-  let curElement: VElement = null;
-  return (fn: () => ElementArr, nextNode: HTMLElement) => {
-    const el = typeof fn === 'function' ? fn() : fn;
-    const nextElement = convertArrToElement(el);
-    mount(curElement, nextElement, nextNode);
-    curElement = nextElement;
-  };
-}
-
-export const render = renderFn();
-
-const isTextNode = (node: VElement) => node.type === 'text';
-
-function updateNodeProperties(
-  node: HTMLElement,
-  curProps: any,
-  nextProps: any,
-) {
-  const props = { ...curProps, ...nextProps };
-  for (const name in props) {
-    updateProperty(node, name, curProps[name], nextProps[name]);
-  }
+interface SymbolicExpressions extends Array<any> {
+  [0]: ITag;
+  [1]: IProps | string | number | SymbolicExpressions;
+  [2]?: string | number | SymbolicExpressions;
 }
 
 interface Obj {
@@ -132,19 +57,194 @@ type Value = string | number | boolean | Obj;
 interface DynamicHTMLElement extends HTMLElement {
   [key: string]: any;
 }
+interface DynamicSVGElement extends SVGSVGElement {
+  [key: string]: any;
+}
+
+type Render = any[] | VElement;
+type RenderFn = () => Render;
+type Fn = () => void;
+type LifeCycle = Fn[];
+
+const XLINK_NS = 'http://www.w3.org/1999/xlink';
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+const isElement = (el: any) => el && el.type;
+const isTextElement = (el: any) => el && el.type === 'text';
+const getKey = (node: VElement) => {
+  if (node && node.props) {
+    return node.props.key;
+  }
+
+  return null;
+};
+
+export const createKeyMap = (element: VElement, node: any) => {
+  const { children } = element.props;
+  const out: { [key: string]: any } = {};
+  children.forEach((child: VElement, index: number) => {
+    const key = getKey(child);
+    if (!key) {
+      return;
+    }
+    out[key] = {
+      element: child,
+      node: node.children[index],
+    };
+  });
+  return out;
+};
+
+export function createTextElement({
+  text,
+  props = {},
+}: ICreateTextElement): VElement {
+  return {
+    type: 'text',
+    tag: 'text',
+    text,
+    props,
+    dom: null,
+  };
+}
+
+export function createElement({
+  tag,
+  props = {},
+  children = [],
+}: ICreateElement): VElement {
+  if (typeof tag === 'function') {
+    return tag({ ...props, children });
+  }
+
+  if (typeof children === 'string' || typeof children === 'number') {
+    return createElement({
+      tag,
+      props,
+      children: [createTextElement({ text: children })],
+    });
+  }
+
+  return {
+    type: 'tag',
+    tag,
+    dom: null,
+    props: {
+      ...props,
+      children,
+    },
+  };
+}
+
+function transformChildrenToElements(
+  el: string | number | SymbolicExpressions[],
+): VElement[] {
+  if (Array.isArray(el)) {
+    if (typeof el[0] === 'string') {
+      return [transformSExpToElement(el as SymbolicExpressions)];
+    } else {
+      return el.map(transformSExpToElement);
+    }
+  }
+
+  const text: string | number = el;
+  return [createTextElement({ text })];
+}
+
+function transformSExpToElement(
+  el: SymbolicExpressions | string | number | VElement,
+): VElement {
+  if (!Array.isArray(el)) {
+    return el as VElement;
+  }
+
+  let ele = null;
+  if (el.length === 1) {
+    return createElement({ tag: el[0] });
+  } else if (el.length === 2) {
+    const children = transformChildrenToElements(el[1] as SymbolicExpressions);
+    ele = createElement({ tag: el[0], children });
+  } else if (el.length === 3) {
+    const children = transformChildrenToElements(el[2]);
+    ele = createElement({ tag: el[0], props: el[1] as IProps, children });
+  }
+
+  if (Array.isArray(ele)) {
+    return transformSExpToElement(ele);
+  }
+
+  return ele;
+}
+
+function componentDidMount(
+  fn: (dom: DOMElement) => void,
+  lifecycle: LifeCycle,
+  dom: DOMElement,
+) {
+  if (!fn) {
+    return;
+  }
+
+  lifecycle.push(() => {
+    fn(dom);
+  });
+}
+
+function componentDidUpdate(
+  fn: (p: IProps) => void,
+  lifecycle: LifeCycle,
+  lastProps: IProps,
+) {
+  if (!fn) {
+    return;
+  }
+
+  lifecycle.push(() => {
+    fn(lastProps);
+  });
+}
+
+function componentDidUnmount(fn: () => void, lifecycle: LifeCycle) {
+  if (!fn) {
+    return;
+  }
+
+  lifecycle.push(() => {
+    fn();
+  });
+}
+
+function updateDomProps(
+  node: DOMElement,
+  curProps: any,
+  nextProps: any,
+  lifecycle: LifeCycle,
+  isRecycled: boolean,
+) {
+  const props = { ...curProps, ...nextProps };
+  for (const name in props) {
+    updateProp(node, name, curProps[name], nextProps[name]);
+  }
+
+  if (isRecycled) {
+    componentDidUpdate(nextProps.componentDidUpdate, lifecycle, curProps);
+  } else {
+    componentDidMount(props.componentDidMount, lifecycle, node);
+  }
+}
 
 const eventProxy = (event: any) =>
   event.currentTarget.events[event.type](event);
 
-const ignoreAttributes = ['key', 'children'];
-const mustSetAttribute = ['list', 'draggable', 'spellcheck', 'translate'];
-
-function updateProperty(
-  node: DynamicHTMLElement,
+function updateProp(
+  node: DynamicHTMLElement | DynamicSVGElement,
   name: string,
   curValue: Value,
   nextValue: Value,
 ) {
+  const ignoreAttributes = ['key', 'children'];
+  const mustSetAttribute = ['list', 'draggable', 'spellcheck', 'translate'];
+
   if (ignoreAttributes.indexOf(name) >= 0) {
     return;
   }
@@ -170,23 +270,35 @@ function updateProperty(
       node.addEventListener(eventNameType, eventProxy);
     }
   } else {
-    const nullOrFalse = nextValue == null || nextValue === false;
-    if (mustSetAttribute.indexOf(name) >= 0) {
-      if (nullOrFalse) {
-        node.removeAttribute(name);
+    const isEmpty =
+      nextValue == null ||
+      nextValue === false ||
+      typeof nextValue === 'undefined';
+    const ns = name.replace('xlink:', '');
+    const isXLink = name !== ns;
+
+    if (isXLink) {
+      if (isEmpty) {
+        node.removeAttributeNS(XLINK_NS, ns);
       } else {
-        node.addAttribute(name, nextValue);
+        node.setAttributeNS(XLINK_NS, name, `${nextValue}`);
+      }
+    } else if (name in node && mustSetAttribute.indexOf(name) === -1) {
+      node[name] = nextValue == null ? '' : `${nextValue}`;
+      if (isEmpty) {
+        node.removeAttribute(name);
       }
     } else {
-      node[name] = nextValue == null ? '' : nextValue;
-      if (nullOrFalse) {
+      if (isEmpty) {
         node.removeAttribute(name);
+      } else {
+        node.setAttribute(name, `${nextValue}`);
       }
     }
   }
 }
 
-function updateStyles(node: HTMLElement, curStyle: Obj, nextStyle: Obj) {
+function updateStyles(node: DOMElement, curStyle: Obj, nextStyle: Obj) {
   const styles = { ...curStyle, ...nextStyle };
   Object.keys(styles).forEach((key) => {
     const value = styles[key] || '';
@@ -194,88 +306,169 @@ function updateStyles(node: HTMLElement, curStyle: Obj, nextStyle: Obj) {
   });
 }
 
-function create(element: VElement, node: HTMLElement): HTMLElement | Text {
-  const { tag, props } = element;
+function createDomElement(element: VElement): DOMElement | Text {
+  if (isTextElement(element)) {
+    return document.createTextNode(`${element.text}`);
+  }
 
-  if (isTextNode(element)) {
-    const domNode = document.createTextNode(tag);
-    node.appendChild(domNode);
-    element.dom = domNode;
+  if (element.tag === 'svg') {
+    return document.createElementNS(SVG_NS, 'svg');
+  }
+
+  return document.createElement(element.tag);
+}
+
+function createDom(element: VElement, lifecycle: LifeCycle): DOMElement | Text {
+  const { props } = element;
+
+  const domNode = createDomElement(element);
+  element.dom = domNode;
+
+  if (isTextElement(element)) {
     return domNode;
   }
 
-  const domNode = document.createElement(tag);
-  updateNodeProperties(domNode, {}, props);
+  updateDomProps(domNode as DOMElement, {}, props, lifecycle, false);
 
   if (props.children) {
     const children = props.children as VElement[];
     children.forEach((child) => {
-      create(child, domNode);
+      domNode.appendChild(createDom(child, lifecycle));
     });
   }
 
-  element.dom = domNode;
-  node.appendChild(domNode);
   return domNode;
 }
 
-function update(
+function patchDom(
   curElement: VElement,
   nextElement: VElement,
-  parent: HTMLElement,
-  node: HTMLElement,
-): HTMLElement {
+  parent: DOMElement,
+  node: DOMElement,
+  lifecycle: LifeCycle,
+): DOMElement {
   if (curElement && !nextElement) {
     parent.removeChild(node);
+    componentDidUnmount(curElement.props.componentDidUnmount, lifecycle);
+    return;
   }
 
-  if (!curElement && nextElement) {
-    create(nextElement, parent);
+  if ((!curElement && nextElement) || !node) {
+    parent.appendChild(createDom(nextElement, lifecycle));
     return;
   }
 
   if (curElement === nextElement) {
-    console.log('EQUAL');
-  } else if (isTextNode(curElement) && isTextNode(nextElement)) {
-    console.log('TEXTNODE');
-    node.nodeValue = `${nextElement.tag}`;
-  } else if (!isTextNode(curElement) && !isTextNode(nextElement)) {
-    console.log('CHILDREN');
+  } else if (isTextElement(curElement) && isTextElement(nextElement)) {
+    node.nodeValue = `${nextElement.text}`;
+  } else if (!isTextElement(curElement) && !isTextElement(nextElement)) {
     const curChildren = curElement.props.children as VElement[];
     const nextChildren = nextElement.props.children as VElement[];
-    console.log(curChildren.length, nextChildren.length);
-    if (nextChildren.length >= curChildren.length) {
-      nextChildren.forEach((nextChild, index) => {
-        update(curChildren[index], nextChild, node, node.firstChild as any);
-      });
-    } else {
+    const keyMap = createKeyMap(curElement, node);
+
+    if (nextChildren.length < curChildren.length) {
+      // previous children is larger than new children
+      const nextKeyMap = createKeyMap(nextElement, node);
       curChildren.forEach((curChild, index) => {
-        update(curChild, nextChildren[index], node, node.firstChild as any);
+        const curKey = getKey(curChild);
+        const nextChild = nextKeyMap[curKey];
+        if (!nextChild) {
+          patchDom(
+            curChild,
+            nextChild,
+            node,
+            node.children[index] as DOMElement,
+            lifecycle,
+          );
+        }
       });
     }
-  } else if (isTextNode(curElement) && !isTextNode(nextElement)) {
-    console.log('NEXT ELEMENT NOT TEXT');
-    const newNode = document.createElement('div');
-    create(nextElement, newNode);
-    parent.insertBefore(newNode.firstChild, node);
+
+    let curIndex = 0;
+    nextChildren.forEach((nextChild, index) => {
+      const nextKey = getKey(nextChild);
+      const curKey = getKey(curChildren[index]);
+      const curChild = keyMap[nextKey];
+      if (curChild) {
+        if (node.children.length > curIndex) {
+          node.insertBefore(curChild.node, node.children[curIndex]);
+          patchDom(
+            curChild.element,
+            nextChild,
+            node,
+            node.children[curIndex] as DOMElement,
+            lifecycle,
+          );
+        }
+      } else if (curKey) {
+        const domNode = createDom(nextChild, lifecycle);
+        node.insertBefore(domNode, node.children[curIndex]);
+        curIndex += 1;
+      } else if (node.children.length > curIndex) {
+        patchDom(
+          curChildren[index],
+          nextChild,
+          node,
+          node.children[curIndex] as DOMElement,
+          lifecycle,
+        );
+      } else {
+        patchDom(
+          curChildren[index],
+          nextChild,
+          node,
+          node.firstChild as DOMElement,
+          lifecycle,
+        );
+      }
+
+      curIndex += 1;
+    });
+  } else {
+    const domNode = createDom(nextElement, lifecycle);
+    parent.insertBefore(domNode, node);
     parent.removeChild(node);
+    componentDidUnmount(curElement.props.componentDidUnmount, lifecycle);
   }
 
-  if (!isTextNode(nextElement)) {
-    updateNodeProperties(node, curElement.props, nextElement.props);
-  }
   nextElement.dom = node;
+
+  if (!isTextElement(nextElement)) {
+    updateDomProps(node, curElement.props, nextElement.props, lifecycle, true);
+  }
+
   return node;
 }
 
-export function mount(
+export function renderFactory() {
+  let curElement: VElement = null;
+  return (fn: RenderFn | Render, nextNode: DOMElement) => {
+    const el = typeof fn === 'function' ? fn() : fn;
+    const nextElement = isElement(el)
+      ? (el as VElement)
+      : transformSExpToElement(el as SymbolicExpressions);
+
+    // console.log(JSON.stringify(nextElement, null, 2));
+    patch(curElement, nextElement, nextNode);
+    curElement = nextElement;
+  };
+}
+
+export const render = renderFactory();
+
+export function patch(
   curElement: VElement,
   nextElement: VElement,
-  node: HTMLElement,
+  root: DOMElement,
 ) {
-  if (!curElement) {
-    return create(nextElement, node);
-  }
+  const lifecycle: LifeCycle = [];
+  const node = root ? root.firstChild : null;
 
-  return update(curElement, nextElement, node, node.firstChild as any);
+  patchDom(curElement, nextElement, root, node as DOMElement, lifecycle);
+
+  lifecycle.forEach((fn) => {
+    fn();
+  });
+
+  return node;
 }
