@@ -14,8 +14,12 @@
 ```js
 import { render } from './index';
 
-const App = () => ['div', [['div', { style: { color: 'tomato' } }, 'some text!']]];
-const AppUpdate = () => ['div', [['div', { style: { color: 'limegreen' } }, 'some updated text!']]];
+const App = () => ['div',
+  ['div', { style: { color: 'tomato' } }, 'some text!'],
+];
+const AppUpdate = () => ['div',
+  ['div', { style: { color: 'limegreen' } }, 'some updated text!'],
+];
 
 render(App, document.body);
 render(AppUpdate, document.body);

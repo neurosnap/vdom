@@ -43,10 +43,7 @@ test('should render component', () => {
 });
 
 test('symbolic expressions should render to the dom', () => {
-  const el = [
-    'div',
-    [['div', { className: 'nested' }, [['span', 'hi there']]]],
-  ];
+  const el = ['div', ['div', { className: 'nested' }, ['span', 'hi there']]];
 
   render(el, document.body);
   expect(document.body.innerHTML).toEqual(
