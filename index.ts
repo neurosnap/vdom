@@ -135,6 +135,7 @@ export function createElement({
     },
   };
 }
+export const h = createElement;
 
 function transformChildrenToElements(
   el: string | number | SymbolicExpressions[],

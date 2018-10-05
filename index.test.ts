@@ -1,5 +1,4 @@
-import { render, createElement } from './index';
-const h = createElement;
+import { render, h } from './index';
 
 const resetDOM = () => {
   document.body.innerHTML = '';
@@ -35,7 +34,7 @@ test('should render recursively', () => {
 
 test('should render component', () => {
   const Tmp = () => {
-    return createElement({ tag: 'div', children: 'test' });
+    return h({ tag: 'div', children: 'test' });
   };
   const el = h({ tag: Tmp });
   render(el, document.body);
