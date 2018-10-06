@@ -178,22 +178,23 @@ function transformSExpToElement(
 }
 
 function componentDidMount(
-  fn: (dom: DOMElement) => void,
+  fn: (node: DOMElement) => void,
   lifecycle: LifeCycle,
-  dom: DOMElement,
+  node: DOMElement,
 ) {
   if (!fn) {
     return;
   }
 
   lifecycle.push(() => {
-    fn(dom);
+    fn(node);
   });
 }
 
 function componentDidUpdate(
-  fn: (p: IProps) => void,
+  fn: (node: DOMElement, p: IProps) => void,
   lifecycle: LifeCycle,
+  node: DOMElement,
   lastProps: IProps,
 ) {
   if (!fn) {
@@ -201,18 +202,32 @@ function componentDidUpdate(
   }
 
   lifecycle.push(() => {
-    fn(lastProps);
+    fn(node, lastProps);
   });
 }
 
-function componentDidUnmount(fn: () => void, lifecycle: LifeCycle) {
+function componentWillUnmount(
+  fn: (node: DOMElement) => void,
+  node: DOMElement,
+) {
   if (!fn) {
     return;
   }
 
-  lifecycle.push(() => {
-    fn();
-  });
+  fn(node);
+}
+
+function componentDidUnmount(
+  fn: (node: DOMElement, r: () => void) => void,
+  node: DOMElement,
+  remove: () => void,
+) {
+  if (!fn) {
+    remove();
+    return;
+  }
+
+  fn(node, remove);
 }
 
 function updateDomProps(
@@ -228,7 +243,7 @@ function updateDomProps(
   }
 
   if (isRecycled) {
-    componentDidUpdate(nextProps.componentDidUpdate, lifecycle, curProps);
+    componentDidUpdate(nextProps.componentDidUpdate, lifecycle, node, curProps);
   } else {
     componentDidMount(props.componentDidMount, lifecycle, node);
   }
@@ -319,6 +334,30 @@ function createDomElement(element: VElement): DOMElement | Text {
   return document.createElement(element.tag);
 }
 
+function removeDomChildren(node: DOMElement, element: VElement) {
+  const { children } = element.props;
+  if (children) {
+    children.forEach((child, index) => {
+      removeDomChildren(node.children[index] as DOMElement, child);
+    });
+  }
+
+  componentWillUnmount(element.props.componentWillUnmount, node);
+}
+
+function removeDomElement(
+  parent: DOMElement,
+  node: DOMElement,
+  element: VElement,
+) {
+  const remove = () => {
+    removeDomChildren(node, element);
+    parent.removeChild(node);
+  };
+
+  componentDidUnmount(element.props.componentDidUnmount, node, remove);
+}
+
 function createDom(element: VElement, lifecycle: LifeCycle): DOMElement | Text {
   const { props } = element;
 
@@ -349,8 +388,7 @@ function patchDom(
   lifecycle: LifeCycle,
 ): DOMElement {
   if (curElement && !nextElement) {
-    parent.removeChild(node);
-    componentDidUnmount(curElement.props.componentDidUnmount, lifecycle);
+    removeDomElement(parent, node, curElement);
     return;
   }
 
@@ -428,8 +466,7 @@ function patchDom(
   } else {
     const domNode = createDom(nextElement, lifecycle);
     parent.insertBefore(domNode, node);
-    parent.removeChild(node);
-    componentDidUnmount(curElement.props.componentDidUnmount, lifecycle);
+    removeDomElement(parent, node, curElement);
   }
 
   nextElement.dom = node;
