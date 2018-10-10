@@ -538,6 +538,28 @@ test('componentDidUpdate', () => {
   expect(componentDidUpdate).toHaveBeenCalled();
 });
 
+test('componentWillUnmount', () => {
+  const componentWillUnmount = jest.fn();
+  const el = h({
+    tag: 'div',
+    children: [
+      h({
+        tag: 'div',
+        props: { componentWillUnmount },
+        children: 'hi there',
+      }),
+    ],
+  });
+  const elTwo = h({
+    tag: 'div',
+    children: 'yo there',
+  });
+
+  render(el, document.body);
+  render(elTwo, document.body);
+  expect(componentWillUnmount).toHaveBeenCalled();
+});
+
 test('componentDidUnmount', () => {
   const componentDidUnmount = jest.fn();
   const el = h({

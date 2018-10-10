@@ -7,7 +7,7 @@
 * Children keys
 * SVGs
 * DOM Events
-* Lifecycle functions (componentDidMount, componentDidUpdate, componentDidUnmount)
+* Lifecycle functions (componentDidMount, componentDidUpdate, componentWillUnmount, componentDidUnmount)
 
 ## Example
 
