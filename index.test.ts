@@ -1,4 +1,4 @@
-import { render, h } from './index';
+import { render } from './index';
 
 const resetDOM = () => {
   document.body.innerHTML = '';
@@ -6,93 +6,108 @@ const resetDOM = () => {
 
 beforeEach(() => {
   resetDOM();
+  jest.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => cb());
 });
 
-test('render div to dom', () => {
-  const el = h({ tag: 'div', children: 'test' });
-  render(() => el, document.body);
-  expect(document.body.innerHTML).toEqual('<div>test</div>');
+afterEach(() => {
+  (window.requestAnimationFrame as any).mockRestore();
 });
 
-test('should render recursively', () => {
-  const el = h({
-    tag: 'div',
-    children: [
-      h({
-        tag: 'div',
-        props: { className: 'nested' },
-        children: [h({ tag: 'span', children: 'hi there' })],
-      }),
-    ],
+test('render div to dom', (done) => {
+  const el = ['div', 'test'];
+  render(el, document.body).then(() => {
+    expect(document.body.innerHTML).toEqual('<div>test</div>');
+    done();
   });
-
-  render(el, document.body);
-  expect(document.body.innerHTML).toEqual(
-    '<div><div class="nested"><span>hi there</span></div></div>',
-  );
 });
 
-test('should render component', () => {
+test('should render recursively', (done) => {
+  const el = ['div', ['div', { className: 'nested' }, ['span', 'hi there']]];
+
+  render(el, document.body).then(() => {
+    expect(document.body.innerHTML).toEqual(
+      '<div><div class="nested"><span>hi there</span></div></div>',
+    );
+    done();
+  });
+});
+
+test('should render component', (done) => {
   const Tmp = () => {
-    return h({ tag: 'div', children: 'test' });
+    return ['div', 'test'];
   };
-  const el = h({ tag: Tmp });
-  render(el, document.body);
-  expect(document.body.innerHTML).toEqual('<div>test</div>');
+  const el = [Tmp];
+  render(el, document.body).then(() => {
+    expect(document.body.innerHTML).toEqual('<div>test</div>');
+    done();
+  });
 });
 
-test('symbolic expressions should render to the dom', () => {
+test('symbolic expressions should render to the dom', (done) => {
   const el = ['div', ['div', { className: 'nested' }, ['span', 'hi there']]];
 
-  render(el, document.body);
-  expect(document.body.innerHTML).toEqual(
-    '<div><div class="nested"><span>hi there</span></div></div>',
-  );
+  render(el, document.body).then(() => {
+    expect(document.body.innerHTML).toEqual(
+      '<div><div class="nested"><span>hi there</span></div></div>',
+    );
+    done();
+  });
 });
 
-test('symbolic expressions children as single s-exp should render to the dom', () => {
+test('symbolic expressions children as single s-exp should render to the dom', (done) => {
   const el = ['div', ['div', { className: 'nested' }, ['span', 'hi there']]];
 
-  render(el, document.body);
-  expect(document.body.innerHTML).toEqual(
-    '<div><div class="nested"><span>hi there</span></div></div>',
-  );
+  render(el, document.body).then(() => {
+    expect(document.body.innerHTML).toEqual(
+      '<div><div class="nested"><span>hi there</span></div></div>',
+    );
+    done();
+  });
 });
 
-test('patch updating dom class', () => {
-  const elOne = h({
-    tag: 'div',
-    props: { className: 'nested' },
-    children: 'hi there',
-  });
-  const elTwo = h({
-    tag: 'div',
-    props: { className: 'wow' },
-    children: 'hi there',
-  });
+test('render nested functional component', (done) => {
+  const App = () => ['span', 'hi there'];
+  const el = ['div', ['div', App]];
 
-  render(elOne, document.body);
-  render(elTwo, document.body);
-  expect(document.body.innerHTML).toEqual('<div class="wow">hi there</div>');
+  render(el, document.body).then(() => {
+    expect(document.body.innerHTML).toEqual(
+      '<div><div><span>hi there</span></div></div>',
+    );
+    done();
+  });
 });
 
-test('patch remove dom class', () => {
-  const elOne = h({
-    tag: 'div',
-    props: { className: 'nested' },
-    children: 'hi there',
-  });
-  const elTwo = h({
-    tag: 'div',
-    children: 'hi there',
-  });
+test('patch updating dom class', (done) => {
+  const elOne = ['div', { className: 'nested' }, 'hi there'];
+  const elTwo = ['div', { className: 'wow' }, 'hi there'];
 
-  render(elOne, document.body);
-  render(elTwo, document.body);
-  expect(document.body.innerHTML).toEqual('<div class="">hi there</div>');
+  render(elOne, document.body)
+    .then(() => {
+      return render(elTwo, document.body);
+    })
+    .then(() => {
+      expect(document.body.innerHTML).toEqual(
+        '<div class="wow">hi there</div>',
+      );
+      done();
+    });
 });
 
-test('patch add dom class', () => {
+test('patch remove dom class', (done) => {
+  const elOne = ['div', { className: 'nested' }, 'hi there'];
+  const elTwo = ['div', 'hi there'];
+
+  render(elOne, document.body)
+    .then(() => {
+      return render(elTwo, document.body);
+    })
+    .then(() => {
+      expect(document.body.innerHTML).toEqual('<div class="">hi there</div>');
+      done();
+    });
+});
+
+/* test('patch add dom class', () => {
   const elOne = h({
     tag: 'div',
     children: 'hi there',
@@ -580,4 +595,4 @@ test('componentDidUnmount', () => {
   render(el, document.body);
   render(elTwo, document.body);
   expect(componentDidUnmount).toHaveBeenCalled();
-});
+}); */
