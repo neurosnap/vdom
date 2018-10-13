@@ -1,4 +1,4 @@
-import { task, call, all } from 'cofx';
+import { call, all, factory, Effect, NextFn, TaskFn } from 'cofx';
 
 interface Style {
   [key: string]: any;
@@ -64,11 +64,35 @@ interface DynamicSVGElement extends SVGSVGElement {
 }
 
 // type Render = any[] | VElement;
-type Fn = () => void;
+type Fn = (...args: any[]) => void;
 type LifeCycle = Fn[];
 
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
 const SVG_NS = 'http://www.w3.org/2000/svg';
+
+const CONTEXT = 'CONTEXT';
+export const context = (fn: Fn, ...args: any[]) => ({
+  type: CONTEXT,
+  fn,
+  args,
+});
+function contextEffect({ fn, args }: { fn: Fn; args: any[] }, state: any) {
+  const result = fn(state, ...args);
+  return Promise.resolve(result);
+}
+
+function handler(effect: Effect, state: any) {
+  if (effect && effect.type === CONTEXT) {
+    return contextEffect(effect as any, state);
+  }
+  return effect;
+}
+function middleware(state: any) {
+  return (next: NextFn) => (effect: Effect) => {
+    const nextEffect = handler(effect, state);
+    return next(nextEffect);
+  };
+}
 
 // const isElement = (el: any) => el && el.type;
 const isTextElement = (el: any) => el && el.type === 'text';
@@ -144,7 +168,7 @@ function* transformChildrenToElements(
   el: string | number | SymbolicExpressions[] | ITag,
 ) {
   if (Array.isArray(el)) {
-    if (typeof el[0] === 'string') {
+    if (typeof el[0] === 'string' || typeof el[0] === 'function') {
       const els = yield call(transformSExpToElement, el as SymbolicExpressions);
       return [els];
     } else {
@@ -173,11 +197,20 @@ function* transformSExpToElement(
   if (el.length === 1) {
     ele = yield call(createElement, { tag: el[0] });
   } else if (el.length === 2) {
-    const children = yield call(
-      transformChildrenToElements,
-      el[1] as SymbolicExpressions,
-    );
-    ele = yield call(createElement, { tag: el[0], children });
+    if (
+      typeof el[1] === 'string' ||
+      typeof el[1] === 'number' ||
+      Array.isArray(el[1]) ||
+      typeof el[1] === 'function'
+    ) {
+      const children = yield call(
+        transformChildrenToElements,
+        el[1] as SymbolicExpressions,
+      );
+      ele = yield call(createElement, { tag: el[0], children });
+    } else {
+      ele = yield call(createElement, { tag: el[0], props: el[1] });
+    }
   } else if (el.length === 3) {
     const children = yield call(transformChildrenToElements, el[2]);
     ele = yield call(createElement, {
@@ -205,7 +238,7 @@ function componentDidMount(
   }
 
   lifecycle.push(() => {
-    task(fn, node);
+    fn(node);
   });
 }
 
@@ -220,7 +253,7 @@ function componentDidUpdate(
   }
 
   lifecycle.push(() => {
-    task(fn, node, lastProps);
+    fn(node, lastProps);
   });
 }
 
@@ -232,7 +265,7 @@ function componentWillUnmount(
     return;
   }
 
-  task(fn, node);
+  fn(node);
 }
 
 function componentDidUnmount(
@@ -245,7 +278,7 @@ function componentDidUnmount(
     return;
   }
 
-  task(fn, node, remove);
+  fn(node, remove);
 }
 
 function updateDomProps(
@@ -406,9 +439,10 @@ function asyncPatchDom(
   parent: DOMElement,
   node: DOMElement,
   lifecycle: LifeCycle,
+  task: TaskFn<any>,
 ) {
   window.requestAnimationFrame(() => {
-    patchDom(curElement, nextElement, parent, node, lifecycle);
+    patchDom(curElement, nextElement, parent, node, lifecycle, task);
   });
 }
 
@@ -418,6 +452,7 @@ function patchDom(
   parent: DOMElement,
   node: DOMElement,
   lifecycle: LifeCycle,
+  task: TaskFn<any>,
 ): DOMElement {
   if (curElement && !nextElement) {
     removeDomElement(parent, node, curElement);
@@ -510,13 +545,14 @@ function patchDom(
   return node;
 }
 
-export function renderFactory() {
+export function renderFactory(...otherMiddleware: any[]) {
   let curElement: VElement = null;
-  return (el: any, nextNode: DOMElement) => {
+  return (el: any, nextNode: DOMElement, state?: any) => {
+    const task = factory(middleware(state), ...otherMiddleware);
     return task(transformSExpToElement, el as SymbolicExpressions).then(
       (nextElement: VElement) => {
         // console.log(JSON.stringify(nextElement, null, 2));
-        patch(curElement, nextElement, nextNode);
+        patch(curElement, nextElement, nextNode, task);
         curElement = nextElement;
       },
     );
@@ -529,11 +565,19 @@ export function patch(
   curElement: VElement,
   nextElement: VElement,
   root: DOMElement,
+  task: TaskFn<any>,
 ) {
   const lifecycle: LifeCycle = [];
   const node = root ? root.firstChild : null;
 
-  asyncPatchDom(curElement, nextElement, root, node as DOMElement, lifecycle);
+  asyncPatchDom(
+    curElement,
+    nextElement,
+    root,
+    node as DOMElement,
+    lifecycle,
+    task,
+  );
 
   lifecycle.forEach((fn) => {
     fn();
