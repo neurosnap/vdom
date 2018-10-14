@@ -232,13 +232,14 @@ function componentDidMount(
   fn: (node: DOMElement) => void,
   lifecycle: LifeCycle,
   node: DOMElement,
+  task: TaskFn<any>,
 ) {
   if (!fn) {
     return;
   }
 
   lifecycle.push(() => {
-    fn(node);
+    task(fn, node);
   });
 }
 
@@ -247,38 +248,41 @@ function componentDidUpdate(
   lifecycle: LifeCycle,
   node: DOMElement,
   lastProps: IProps,
+  task: TaskFn<any>,
 ) {
   if (!fn) {
     return;
   }
 
   lifecycle.push(() => {
-    fn(node, lastProps);
+    task(fn, node, lastProps);
   });
 }
 
 function componentWillUnmount(
   fn: (node: DOMElement) => void,
   node: DOMElement,
+  task: TaskFn<any>,
 ) {
   if (!fn) {
     return;
   }
 
-  fn(node);
+  task(fn, node);
 }
 
 function componentDidUnmount(
   fn: (node: DOMElement, r: () => void) => void,
   node: DOMElement,
   remove: () => void,
+  task: TaskFn<any>,
 ) {
   if (!fn) {
     remove();
     return;
   }
 
-  fn(node, remove);
+  task(fn, node, remove);
 }
 
 function updateDomProps(
@@ -287,6 +291,7 @@ function updateDomProps(
   nextProps: any,
   lifecycle: LifeCycle,
   isRecycled: boolean,
+  task: TaskFn<any>,
 ) {
   const props = { ...curProps, ...nextProps };
   for (const name in props) {
@@ -294,9 +299,15 @@ function updateDomProps(
   }
 
   if (isRecycled) {
-    componentDidUpdate(nextProps.componentDidUpdate, lifecycle, node, curProps);
+    componentDidUpdate(
+      nextProps.componentDidUpdate,
+      lifecycle,
+      node,
+      curProps,
+      task,
+    );
   } else {
-    componentDidMount(props.componentDidMount, lifecycle, node);
+    componentDidMount(props.componentDidMount, lifecycle, node, task);
   }
 }
 
@@ -385,33 +396,42 @@ function createDomElement(element: VElement): DOMElement | Text {
   return document.createElement(element.tag);
 }
 
-function removeDomChildren(node: DOMElement, element: VElement) {
+function removeDomChildren(
+  node: DOMElement,
+  element: VElement,
+  task: TaskFn<any>,
+) {
   const { children } = element.props;
   if (children) {
     children.forEach((child, index) => {
-      removeDomChildren(node.children[index] as DOMElement, child);
+      removeDomChildren(node.children[index] as DOMElement, child, task);
     });
   }
 
-  componentWillUnmount(element.props.componentWillUnmount, node);
+  componentWillUnmount(element.props.componentWillUnmount, node, task);
 }
 
 function removeDomElement(
   parent: DOMElement,
   node: DOMElement,
   element: VElement,
+  task: TaskFn<any>,
 ) {
   const remove = () => {
-    removeDomChildren(node, element);
+    removeDomChildren(node, element, task);
     parent.removeChild(node);
   };
 
-  componentDidUnmount(element.props.componentDidUnmount, node, remove);
+  componentDidUnmount(element.props.componentDidUnmount, node, remove, task);
 }
 
 // function asyncCreateDom(element: VElement, lifecycle: LifeCycle) {}
 
-function createDom(element: VElement, lifecycle: LifeCycle): DOMElement | Text {
+function createDom(
+  element: VElement,
+  lifecycle: LifeCycle,
+  task: TaskFn<any>,
+): DOMElement | Text {
   const { props } = element;
 
   const domNode = createDomElement(element);
@@ -421,12 +441,12 @@ function createDom(element: VElement, lifecycle: LifeCycle): DOMElement | Text {
     return domNode;
   }
 
-  updateDomProps(domNode as DOMElement, {}, props, lifecycle, false);
+  updateDomProps(domNode as DOMElement, {}, props, lifecycle, false, task);
 
   if (props && props.children) {
     const children = props.children as VElement[];
     children.forEach((child) => {
-      domNode.appendChild(createDom(child, lifecycle));
+      domNode.appendChild(createDom(child, lifecycle, task));
     });
   }
 
@@ -455,12 +475,12 @@ function patchDom(
   task: TaskFn<any>,
 ): DOMElement {
   if (curElement && !nextElement) {
-    removeDomElement(parent, node, curElement);
+    removeDomElement(parent, node, curElement, task);
     return;
   }
 
   if ((!curElement && nextElement) || !node) {
-    parent.appendChild(createDom(nextElement, lifecycle));
+    parent.appendChild(createDom(nextElement, lifecycle, task));
     return;
   }
 
@@ -485,6 +505,7 @@ function patchDom(
             node,
             node.children[index] as DOMElement,
             lifecycle,
+            task,
           );
         }
       });
@@ -504,10 +525,11 @@ function patchDom(
             node,
             node.children[curIndex] as DOMElement,
             lifecycle,
+            task,
           );
         }
       } else if (curKey) {
-        const domNode = createDom(nextChild, lifecycle);
+        const domNode = createDom(nextChild, lifecycle, task);
         node.insertBefore(domNode, node.children[curIndex]);
         curIndex += 1;
       } else if (node.children.length > curIndex) {
@@ -517,6 +539,7 @@ function patchDom(
           node,
           node.children[curIndex] as DOMElement,
           lifecycle,
+          task,
         );
       } else {
         asyncPatchDom(
@@ -525,21 +548,29 @@ function patchDom(
           node,
           node.firstChild as DOMElement,
           lifecycle,
+          task,
         );
       }
 
       curIndex += 1;
     });
   } else {
-    const domNode = createDom(nextElement, lifecycle);
+    const domNode = createDom(nextElement, lifecycle, task);
     parent.insertBefore(domNode, node);
-    removeDomElement(parent, node, curElement);
+    removeDomElement(parent, node, curElement, task);
   }
 
   nextElement.dom = node;
 
   if (!isTextElement(nextElement)) {
-    updateDomProps(node, curElement.props, nextElement.props, lifecycle, true);
+    updateDomProps(
+      node,
+      curElement.props,
+      nextElement.props,
+      lifecycle,
+      true,
+      task,
+    );
   }
 
   return node;
