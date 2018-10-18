@@ -1,3 +1,5 @@
+import { call, all, factory, Effect, NextFn, TaskFn } from 'cofx';
+
 interface Style {
   [key: string]: any;
 }
@@ -61,15 +63,38 @@ interface DynamicSVGElement extends SVGSVGElement {
   [key: string]: any;
 }
 
-type Render = any[] | VElement;
-type RenderFn = () => Render;
-type Fn = () => void;
+// type Render = any[] | VElement;
+type Fn = (...args: any[]) => void;
 type LifeCycle = Fn[];
 
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
-const isElement = (el: any) => el && el.type;
+const CONTEXT = 'CONTEXT';
+export const context = (fn: Fn, ...args: any[]) => ({
+  type: CONTEXT,
+  fn,
+  args,
+});
+function contextEffect({ fn, args }: { fn: Fn; args: any[] }, state: any) {
+  const result = fn(state, ...args);
+  return Promise.resolve(result);
+}
+
+function handler(effect: Effect, state: any) {
+  if (effect && effect.type === CONTEXT) {
+    return contextEffect(effect as any, state);
+  }
+  return effect;
+}
+function middleware(state: any) {
+  return (next: NextFn) => (effect: Effect) => {
+    const nextEffect = handler(effect, state);
+    return next(nextEffect);
+  };
+}
+
+// const isElement = (el: any) => el && el.type;
 const isTextElement = (el: any) => el && el.type === 'text';
 const getKey = (node: VElement) => {
   if (node && node.props) {
@@ -108,21 +133,23 @@ export function createTextElement({
   };
 }
 
-export function createElement({
+export function* createElement({
   tag,
   props = {},
   children = [],
-}: ICreateElement): VElement {
+}: ICreateElement) {
   if (typeof tag === 'function') {
-    return tag({ ...props, children });
+    const el = yield call(tag, { ...props, children });
+    return el;
   }
 
   if (typeof children === 'string' || typeof children === 'number') {
-    return createElement({
+    const el = yield call(createElement, {
       tag,
       props,
       children: [createTextElement({ text: children })],
     });
+    return el;
   }
 
   return {
@@ -137,41 +164,65 @@ export function createElement({
 }
 export const h = createElement;
 
-function transformChildrenToElements(
-  el: string | number | SymbolicExpressions[],
-): VElement[] {
+function* transformChildrenToElements(
+  el: string | number | SymbolicExpressions[] | ITag,
+) {
   if (Array.isArray(el)) {
-    if (typeof el[0] === 'string') {
-      return [transformSExpToElement(el as SymbolicExpressions)];
+    if (typeof el[0] === 'string' || typeof el[0] === 'function') {
+      const els = yield call(transformSExpToElement, el as SymbolicExpressions);
+      return [els];
     } else {
-      return el.map(transformSExpToElement);
+      const els = yield all(el.map((e) => call(transformSExpToElement, e)));
+      return els;
     }
+  }
+
+  if (typeof el === 'function') {
+    const els = yield call(transformSExpToElement, [el] as any);
+    return [els];
   }
 
   const text: string | number = el;
   return [createTextElement({ text })];
 }
 
-function transformSExpToElement(
+function* transformSExpToElement(
   el: SymbolicExpressions | string | number | VElement,
-): VElement {
+) {
   if (!Array.isArray(el)) {
     return el as VElement;
   }
 
   let ele = null;
   if (el.length === 1) {
-    return createElement({ tag: el[0] });
+    ele = yield call(createElement, { tag: el[0] });
   } else if (el.length === 2) {
-    const children = transformChildrenToElements(el[1] as SymbolicExpressions);
-    ele = createElement({ tag: el[0], children });
+    if (
+      typeof el[1] === 'string' ||
+      typeof el[1] === 'number' ||
+      Array.isArray(el[1]) ||
+      typeof el[1] === 'function'
+    ) {
+      const children = yield call(
+        transformChildrenToElements,
+        el[1] as SymbolicExpressions,
+      );
+      ele = yield call(createElement, { tag: el[0], children });
+    } else {
+      ele = yield call(createElement, { tag: el[0], props: el[1] });
+    }
   } else if (el.length === 3) {
-    const children = transformChildrenToElements(el[2]);
-    ele = createElement({ tag: el[0], props: el[1] as IProps, children });
+    const children = yield call(transformChildrenToElements, el[2]);
+    ele = yield call(createElement, {
+      tag: el[0],
+      props: el[1] as IProps,
+      children,
+    });
   }
 
   if (Array.isArray(ele)) {
-    return transformSExpToElement(ele);
+    const resp = yield call(transformSExpToElement, ele);
+    return resp;
   }
 
   return ele;
@@ -181,13 +232,14 @@ function componentDidMount(
   fn: (node: DOMElement) => void,
   lifecycle: LifeCycle,
   node: DOMElement,
+  task: TaskFn<any>,
 ) {
   if (!fn) {
     return;
   }
 
   lifecycle.push(() => {
-    fn(node);
+    task(fn, node);
   });
 }
 
@@ -196,38 +248,41 @@ function componentDidUpdate(
   lifecycle: LifeCycle,
   node: DOMElement,
   lastProps: IProps,
+  task: TaskFn<any>,
 ) {
   if (!fn) {
     return;
   }
 
   lifecycle.push(() => {
-    fn(node, lastProps);
+    task(fn, node, lastProps);
   });
 }
 
 function componentWillUnmount(
   fn: (node: DOMElement) => void,
   node: DOMElement,
+  task: TaskFn<any>,
 ) {
   if (!fn) {
     return;
   }
 
-  fn(node);
+  task(fn, node);
 }
 
 function componentDidUnmount(
   fn: (node: DOMElement, r: () => void) => void,
   node: DOMElement,
   remove: () => void,
+  task: TaskFn<any>,
 ) {
   if (!fn) {
     remove();
     return;
   }
 
-  fn(node, remove);
+  task(fn, node, remove);
 }
 
 function updateDomProps(
@@ -236,6 +291,7 @@ function updateDomProps(
   nextProps: any,
   lifecycle: LifeCycle,
   isRecycled: boolean,
+  task: TaskFn<any>,
 ) {
   const props = { ...curProps, ...nextProps };
   for (const name in props) {
@@ -243,9 +299,15 @@ function updateDomProps(
   }
 
   if (isRecycled) {
-    componentDidUpdate(nextProps.componentDidUpdate, lifecycle, node, curProps);
+    componentDidUpdate(
+      nextProps.componentDidUpdate,
+      lifecycle,
+      node,
+      curProps,
+      task,
+    );
   } else {
-    componentDidMount(props.componentDidMount, lifecycle, node);
+    componentDidMount(props.componentDidMount, lifecycle, node, task);
   }
 }
 
@@ -334,31 +396,42 @@ function createDomElement(element: VElement): DOMElement | Text {
   return document.createElement(element.tag);
 }
 
-function removeDomChildren(node: DOMElement, element: VElement) {
+function removeDomChildren(
+  node: DOMElement,
+  element: VElement,
+  task: TaskFn<any>,
+) {
   const { children } = element.props;
   if (children) {
     children.forEach((child, index) => {
-      removeDomChildren(node.children[index] as DOMElement, child);
+      removeDomChildren(node.children[index] as DOMElement, child, task);
     });
   }
 
-  componentWillUnmount(element.props.componentWillUnmount, node);
+  componentWillUnmount(element.props.componentWillUnmount, node, task);
 }
 
 function removeDomElement(
   parent: DOMElement,
   node: DOMElement,
   element: VElement,
+  task: TaskFn<any>,
 ) {
   const remove = () => {
-    removeDomChildren(node, element);
+    removeDomChildren(node, element, task);
     parent.removeChild(node);
   };
 
-  componentDidUnmount(element.props.componentDidUnmount, node, remove);
+  componentDidUnmount(element.props.componentDidUnmount, node, remove, task);
 }
 
-function createDom(element: VElement, lifecycle: LifeCycle): DOMElement | Text {
+// function asyncCreateDom(element: VElement, lifecycle: LifeCycle) {}
+
+function createDom(
+  element: VElement,
+  lifecycle: LifeCycle,
+  task: TaskFn<any>,
+): DOMElement | Text {
   const { props } = element;
 
   const domNode = createDomElement(element);
@@ -368,16 +441,29 @@ function createDom(element: VElement, lifecycle: LifeCycle): DOMElement | Text {
     return domNode;
   }
 
-  updateDomProps(domNode as DOMElement, {}, props, lifecycle, false);
+  updateDomProps(domNode as DOMElement, {}, props, lifecycle, false, task);
 
-  if (props.children) {
+  if (props && props.children) {
     const children = props.children as VElement[];
     children.forEach((child) => {
-      domNode.appendChild(createDom(child, lifecycle));
+      domNode.appendChild(createDom(child, lifecycle, task));
     });
   }
 
   return domNode;
+}
+
+function asyncPatchDom(
+  curElement: VElement,
+  nextElement: VElement,
+  parent: DOMElement,
+  node: DOMElement,
+  lifecycle: LifeCycle,
+  task: TaskFn<any>,
+) {
+  window.requestAnimationFrame(() => {
+    patchDom(curElement, nextElement, parent, node, lifecycle, task);
+  });
 }
 
 function patchDom(
@@ -386,14 +472,15 @@ function patchDom(
   parent: DOMElement,
   node: DOMElement,
   lifecycle: LifeCycle,
+  task: TaskFn<any>,
 ): DOMElement {
   if (curElement && !nextElement) {
-    removeDomElement(parent, node, curElement);
+    removeDomElement(parent, node, curElement, task);
     return;
   }
 
   if ((!curElement && nextElement) || !node) {
-    parent.appendChild(createDom(nextElement, lifecycle));
+    parent.appendChild(createDom(nextElement, lifecycle, task));
     return;
   }
 
@@ -412,12 +499,13 @@ function patchDom(
         const curKey = getKey(curChild);
         const nextChild = nextKeyMap[curKey];
         if (!nextChild) {
-          patchDom(
+          asyncPatchDom(
             curChild,
             nextChild,
             node,
             node.children[index] as DOMElement,
             lifecycle,
+            task,
           );
         }
       });
@@ -431,64 +519,74 @@ function patchDom(
       if (curChild) {
         if (node.children.length > curIndex) {
           node.insertBefore(curChild.node, node.children[curIndex]);
-          patchDom(
+          asyncPatchDom(
             curChild.element,
             nextChild,
             node,
             node.children[curIndex] as DOMElement,
             lifecycle,
+            task,
           );
         }
       } else if (curKey) {
-        const domNode = createDom(nextChild, lifecycle);
+        const domNode = createDom(nextChild, lifecycle, task);
         node.insertBefore(domNode, node.children[curIndex]);
         curIndex += 1;
       } else if (node.children.length > curIndex) {
-        patchDom(
+        asyncPatchDom(
           curChildren[index],
           nextChild,
           node,
           node.children[curIndex] as DOMElement,
           lifecycle,
+          task,
         );
       } else {
-        patchDom(
+        asyncPatchDom(
           curChildren[index],
           nextChild,
           node,
           node.firstChild as DOMElement,
           lifecycle,
+          task,
         );
       }
 
       curIndex += 1;
     });
   } else {
-    const domNode = createDom(nextElement, lifecycle);
+    const domNode = createDom(nextElement, lifecycle, task);
     parent.insertBefore(domNode, node);
-    removeDomElement(parent, node, curElement);
+    removeDomElement(parent, node, curElement, task);
   }
 
   nextElement.dom = node;
 
   if (!isTextElement(nextElement)) {
-    updateDomProps(node, curElement.props, nextElement.props, lifecycle, true);
+    updateDomProps(
+      node,
+      curElement.props,
+      nextElement.props,
+      lifecycle,
+      true,
+      task,
+    );
   }
 
   return node;
 }
 
-export function renderFactory() {
+export function renderFactory(...otherMiddleware: any[]) {
   let curElement: VElement = null;
-  return (fn: RenderFn | Render, nextNode: DOMElement) => {
-    const el = typeof fn === 'function' ? fn() : fn;
-    const nextElement = isElement(el)
-      ? (el as VElement)
-      : transformSExpToElement(el as SymbolicExpressions);
-
-    // console.log(JSON.stringify(nextElement, null, 2));
-    patch(curElement, nextElement, nextNode);
-    curElement = nextElement;
+  return (el: any, nextNode: DOMElement, state?: any) => {
+    const task = factory(middleware(state), ...otherMiddleware);
+    return task(transformSExpToElement, el as SymbolicExpressions).then(
+      (nextElement: VElement) => {
+        // console.log(JSON.stringify(nextElement, null, 2));
+        patch(curElement, nextElement, nextNode, task);
+        curElement = nextElement;
+      },
+    );
   };
 }
 
@@ -498,11 +596,19 @@ export function patch(
   curElement: VElement,
   nextElement: VElement,
   root: DOMElement,
+  task: TaskFn<any>,
 ) {
   const lifecycle: LifeCycle = [];
   const node = root ? root.firstChild : null;
 
-  patchDom(curElement, nextElement, root, node as DOMElement, lifecycle);
+  asyncPatchDom(
+    curElement,
+    nextElement,
+    root,
+    node as DOMElement,
+    lifecycle,
+    task,
+  );
 
   lifecycle.forEach((fn) => {
     fn();
